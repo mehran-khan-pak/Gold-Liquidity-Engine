@@ -1,2 +1,81 @@
 //@version=6
-indicator("Gold Liquidity Engine", overlay=true)
+indicator("Gold Liquidity Engine V0.1", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ───── Settings ─────
+showSwing = input.bool(true, "Show Swing Liquidity")
+swingLength = input.int(5, "Swing Length", minval=2)
+
+showLabels = input.bool(true, "Show Labels")
+
+// ───── Colors ─────
+buyColor = color.red
+sellColor = color.blue
+sweptColor = color.lime
+
+// ───── Storage ─────
+var line[] liquidityLines = array.new_line()
+var label[] liquidityLabels = array.new_label()
+
+// ───── Swing Detection ─────
+swingHigh = ta.pivothigh(high, swingLength, swingLength)
+swingLow  = ta.pivotlow(low, swingLength, swingLength)
+
+
+// ───── Create Buy Side Liquidity ─────
+if showSwing and not na(swingHigh)
+    l = line.new(
+         bar_index - swingLength,
+         swingHigh,
+         bar_index + 200,
+         swingHigh,
+         extend=extend.right,
+         color=buyColor,
+         width=1)
+
+    array.push(liquidityLines, l)
+
+    if showLabels
+        lb = label.new(
+             bar_index - swingLength,
+             swingHigh,
+             "BSL",
+             style=label.style_label_down,
+             textcolor=color.white,
+             color=buyColor)
+
+        array.push(liquidityLabels, lb)
+
+
+// ───── Create Sell Side Liquidity ─────
+if showSwing and not na(swingLow)
+    l = line.new(
+         bar_index - swingLength,
+         swingLow,
+         bar_index + 200,
+         swingLow,
+         extend=extend.right,
+         color=sellColor,
+         width=1)
+
+    array.push(liquidityLines, l)
+
+    if showLabels
+        lb = label.new(
+             bar_index - swingLength,
+             swingLow,
+             "SSL",
+             style=label.style_label_up,
+             textcolor=color.white,
+             color=sellColor)
+
+        array.push(liquidityLabels, lb)
+
+
+// ───── Sweep Detection ─────
+if array.size(liquidityLines) > 0
+    for i = 0 to array.size(liquidityLines) - 1
+        li = array.get(liquidityLines, i)
+        price = line.get_y1(li)
+
+        if high > price and low < price
+            line.set_color(li, sweptColor)
