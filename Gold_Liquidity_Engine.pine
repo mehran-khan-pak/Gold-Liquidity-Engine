@@ -1,143 +1,162 @@
 //@version=6
-indicator("Gold Liquidity Engine V0.5", overlay=true, max_lines_count=300, max_labels_count=200)
+indicator("Gold Liquidity Engine V0.6", overlay=true, max_lines_count=300, max_labels_count=200)
 
-// ───── Inputs ─────
-swingLen = input.int(10, "Major Liquidity Swing", minval=3)
-atrMult = input.float(1.8, "Liquidity Strength")
-maxKeep = input.int(25, "Max Active Liquidity")
+// ───── Settings ─────
+swingLen = input.int(10, "Major Swing Length", minval=3)
+touchNeeded = input.int(2, "Liquidity Touches", minval=1)
+maxLevels = input.int(30, "Maximum Levels")
 
 // ───── Colors ─────
 buyColor = color.red
 sellColor = color.blue
-eqColor = color.orange
+sweepColor = color.lime
 
-// ───── Arrays ─────
-var line[] liqLines = array.new_line()
-var float[] liqPrices = array.new_float()
-var int[] liqSide = array.new_int()
+// ───── Storage ─────
+var line[] levels = array.new_line()
+var float[] prices = array.new_float()
+var int[] sides = array.new_int()
+var int[] touches = array.new_int()
+var bool[] swept = array.new_bool()
+
+// ───── Swing Detection ─────
+highSwing = ta.pivothigh(high, swingLen, swingLen)
+lowSwing  = ta.pivotlow(low, swingLen, swingLen)
 
 
-// ───── ATR ─────
+// ───── ATR Based Distance ─────
 atr = ta.atr(14)
+rangeLimit = atr * 0.15
 
 
-// ───── Swings ─────
-sHigh = ta.pivothigh(high, swingLen, swingLen)
-sLow  = ta.pivotlow(low, swingLen, swingLen)
+// ───── Find Existing Liquidity ─────
+findLiquidity(price)=>
+
+    result = -1
+
+    if array.size(prices) > 0
+        for i = 0 to array.size(prices)-1
+
+            oldPrice = array.get(prices,i)
+
+            if math.abs(price-oldPrice) <= rangeLimit
+                result := i
+
+    result
 
 
-// ───── Liquidity Strength Check ─────
-strongMove(level)=>
+// ───── Create Buy Side Liquidity ─────
+if not na(highSwing)
 
-    math.abs(level - close[swingLen]) > atr * atrMult
+    idx = findLiquidity(highSwing)
 
+    if idx >= 0
 
+        array.set(touches, idx, array.get(touches,idx)+1)
 
-// ───── Buy Side Liquidity ─────
-if not na(sHigh)
-
-    if strongMove(sHigh)
+    else
 
         ln = line.new(
-             bar_index - swingLen,
-             sHigh,
-             bar_index + 150,
-             sHigh,
+             bar_index-swingLen,
+             highSwing,
+             bar_index+150,
+             highSwing,
              extend=extend.right,
              color=buyColor,
              width=2)
 
-        array.push(liqLines, ln)
-        array.push(liqPrices, sHigh)
-        array.push(liqSide, 1)
+        array.push(levels,ln)
+        array.push(prices,highSwing)
+        array.push(sides,1)
+        array.push(touches,1)
+        array.push(swept,false)
 
 
-// ───── Sell Side Liquidity ─────
-if not na(sLow)
+// ───── Create Sell Side Liquidity ─────
+if not na(lowSwing)
 
-    if strongMove(sLow)
+    idx = findLiquidity(lowSwing)
+
+    if idx >= 0
+
+        array.set(touches, idx, array.get(touches,idx)+1)
+
+    else
 
         ln = line.new(
-             bar_index - swingLen,
-             sLow,
-             bar_index + 150,
-             sLow,
+             bar_index-swingLen,
+             lowSwing,
+             bar_index+150,
+             lowSwing,
              extend=extend.right,
              color=sellColor,
              width=2)
 
-        array.push(liqLines, ln)
-        array.push(liqPrices, sLow)
-        array.push(liqSide, -1)// ───── Sweep Detection & Remove ─────
+        array.push(levels,ln)
+        array.push(prices,lowSwing)
+        array.push(sides,-1)
+        array.push(touches,1)
+        array.push(swept,false)// ───── Sweep Detection + Neon Green Mark ─────
 
-if array.size(liqLines) > 0
+if array.size(levels) > 0
 
-    for i = array.size(liqLines) - 1 to 0
+    for i = 0 to array.size(levels)-1
 
-        price = array.get(liqPrices, i)
-        side  = array.get(liqSide, i)
+        price = array.get(prices,i)
+        side  = array.get(sides,i)
+        isSwept = array.get(swept,i)
 
-        sweep = false
+        if not isSwept
 
-        if side == 1 and high >= price
-            sweep := true
+            hit = false
 
-        if side == -1 and low <= price
-            sweep := true
+            // Buy Side Liquidity sweep
+            if side == 1 and high >= price
+                hit := true
 
-
-        if sweep
-
-            line.delete(array.get(liqLines, i))
-
-            array.remove(liqLines, i)
-            array.remove(liqPrices, i)
-            array.remove(liqSide, i)
+            // Sell Side Liquidity sweep
+            if side == -1 and low <= price
+                hit := true
 
 
-// ───── Keep Only Recent Major Liquidity ─────
+            if hit
 
-if array.size(liqLines) > maxKeep
+                line.set_color(array.get(levels,i), sweepColor)
+                line.set_width(array.get(levels,i), 3)
 
-    extra = array.size(liqLines) - maxKeep
+                array.set(swept,i,true)
+
+
+// ───── Remove Weak Liquidity ─────
+
+if array.size(levels) > 0
+
+    for i = array.size(levels)-1 to 0
+
+        touchCount = array.get(touches,i)
+        isSwept = array.get(swept,i)
+
+        // Sirf weak unswept levels remove
+        if touchCount < touchNeeded and not isSwept
+
+            line.delete(array.get(levels,i))
+
+            array.remove(levels,i)
+            array.remove(prices,i)
+            array.remove(sides,i)
+            array.remove(touches,i)
+            array.remove(swept,i)
+
+
+// ───── Limit Visible Levels ─────
+
+if array.size(levels) > maxLevels
+
+    extra = array.size(levels) - maxLevels
 
     for i = 0 to extra - 1
 
-        line.delete(array.shift(liqLines))
-        array.shift(liqPrices)
-        array.shift(liqSide)
-
-
-// ───── EQH / EQL Liquidity Pool ─────
-
-eqRange = atr * 0.12
-
-prevHigh = ta.valuewhen(not na(sHigh), sHigh, 1)
-prevLow  = ta.valuewhen(not na(sLow), sLow, 1)
-
-
-if not na(sHigh) and not na(prevHigh)
-
-    if math.abs(sHigh - prevHigh) <= eqRange
-
-        label.new(
-             bar_index - swingLen,
-             sHigh,
-             "EQH Liquidity",
-             style=label.style_label_down,
-             color=eqColor,
-             textcolor=color.white)
-
-
-
-if not na(sLow) and not na(prevLow)
-
-    if math.abs(sLow - prevLow) <= eqRange
-
-        label.new(
-             bar_index - swingLen,
-             sLow,
-             "EQL Liquidity",
-             style=label.style_label_up,
-             color=eqColor,
-             textcolor=color.white)
+        line.delete(array.shift(levels))
+        array.shift(prices)
+        array.shift(sides)
+        array.shift(touches)
+        array.shift(swept)
