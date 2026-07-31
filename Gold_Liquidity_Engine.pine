@@ -1,0 +1,2 @@
+//@version=6
+indicator("Gold Liquidity Engine", overlay=true)
