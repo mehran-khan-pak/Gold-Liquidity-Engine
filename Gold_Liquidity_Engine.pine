@@ -1,105 +1,141 @@
 //@version=6
-indicator("Gold Liquidity Engine V0.2", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Gold Liquidity Engine V0.3", overlay=true, max_lines_count=300, max_labels_count=100)
 
-// ───── Settings ─────
-swingLength = input.int(5, "Liquidity Swing Length", minval=2)
-showLabels = input.bool(true, "Show Liquidity Labels")
-extendBars = input.int(100, "Line Extension")
+// ───── Inputs ─────
+swingLen = input.int(5, "Swing Strength", minval=3)
+minTouches = input.int(2, "Minimum Liquidity Touches", minval=2)
+showLiquidity = input.bool(true, "Show Major Liquidity")
 
 // ───── Colors ─────
-buyLiquidityColor = color.red
-sellLiquidityColor = color.blue
+bslColor = color.red
+sslColor = color.blue
+sweepColor = color.lime
 
 // ───── Arrays ─────
 var line[] liqLines = array.new_line()
-var label[] liqLabels = array.new_label()
-var float[] liqPrices = array.new_float()
-var int[] liqTypes = array.new_int()
-
-// ───── Swing Points ─────
-sHigh = ta.pivothigh(high, swingLength, swingLength)
-sLow  = ta.pivotlow(low, swingLength, swingLength)
+var float[] liqPrice = array.new_float()
+var int[] liqSide = array.new_int()
+var int[] liqTouch = array.new_int()
 
 
-// ───── Create Buy Side Liquidity ─────
-if not na(sHigh)
-    ln = line.new(
-         bar_index - swingLength,
-         sHigh,
-         bar_index + extendBars,
-         sHigh,
-         extend=extend.right,
-         color=buyLiquidityColor,
-         width=1)
-
-    array.push(liqLines, ln)
-    array.push(liqPrices, sHigh)
-    array.push(liqTypes, 1)
-
-    if showLabels
-        lb = label.new(
-             bar_index - swingLength,
-             sHigh,
-             "BSL",
-             style=label.style_label_down,
-             color=buyLiquidityColor,
-             textcolor=color.white)
-
-        array.push(liqLabels, lb)
+// ───── Pivot Detection ─────
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
 
 
-// ───── Create Sell Side Liquidity ─────
-if not na(sLow)
-    ln = line.new(
-         bar_index - swingLength,
-         sLow,
-         bar_index + extendBars,
-         sLow,
-         extend=extend.right,
-         color=sellLiquidityColor,
-         width=1)
-
-    array.push(liqLines, ln)
-    array.push(liqPrices, sLow)
-    array.push(liqTypes, -1)
-
-    if showLabels
-        lb = label.new(
-             bar_index - swingLength,
-             sLow,
-             "SSL",
-             style=label.style_label_up,
-             color=sellLiquidityColor,
-             textcolor=color.white)
-
-        array.push(liqLabels, lb)
+// ───── Liquidity Tolerance ─────
+tolerance = syminfo.mintick * 50
 
 
-// ───── Sweep Removal ─────
+// ───── Function: Check Existing Level ─────
+findLevel(price)=>
+    int index = -1
+    if array.size(liqPrice) > 0
+        for i = 0 to array.size(liqPrice)-1
+            old = array.get(liqPrice,i)
+            if math.abs(old-price) <= tolerance
+                index := i
+    index
+
+
+// ───── Create BSL Candidate ─────
+if showLiquidity and not na(ph)
+
+    idx = findLevel(ph)
+
+    if idx >= 0
+        array.set(liqTouch, idx, array.get(liqTouch,idx)+1)
+
+    else
+        l = line.new(
+             bar_index-swingLen,
+             ph,
+             bar_index+100,
+             ph,
+             extend=extend.right,
+             color=bslColor)
+
+        array.push(liqLines,l)
+        array.push(liqPrice,ph)
+        array.push(liqSide,1)
+        array.push(liqTouch,1)
+
+
+// ───── Create SSL Candidate ─────
+if showLiquidity and not na(pl)
+
+    idx = findLevel(pl)
+
+    if idx >= 0
+        array.set(liqTouch, idx, array.get(liqTouch,idx)+1)
+
+    else
+        l = line.new(
+             bar_index-swingLen,
+             pl,
+             bar_index+100,
+             pl,
+             extend=extend.right,
+             color=sslColor)
+
+        array.push(liqLines,l)
+        array.push(liqPrice,pl)
+        array.push(liqSide,-1)
+        array.push(liqTouch,1)// ───── Major Liquidity Filter ─────
+
+// Remove weak liquidity (single touch levels)
 if array.size(liqLines) > 0
     for i = array.size(liqLines) - 1 to 0
 
-        price = array.get(liqPrices, i)
-        typ = array.get(liqTypes, i)
+        touches = array.get(liqTouch,i)
+
+        if touches < minTouches
+            line.delete(array.get(liqLines,i))
+
+            array.remove(liqLines,i)
+            array.remove(liqPrice,i)
+            array.remove(liqSide,i)
+            array.remove(liqTouch,i)
+
+
+// ───── Sweep Detection & Removal ─────
+
+if array.size(liqLines) > 0
+
+    for i = array.size(liqLines) - 1 to 0
+
+        price = array.get(liqPrice,i)
+        side  = array.get(liqSide,i)
 
         swept = false
 
-        if typ == 1 and high >= price
+        // Buy Side Liquidity sweep
+        if side == 1 and high >= price
             swept := true
 
-        if typ == -1 and low <= price
+        // Sell Side Liquidity sweep
+        if side == -1 and low <= price
             swept := true
 
 
         if swept
-            line.delete(array.get(liqLines, i))
 
-            if array.size(liqLabels) > i
-                label.delete(array.get(liqLabels, i))
+            line.delete(array.get(liqLines,i))
 
-            array.remove(liqLines, i)
-            array.remove(liqPrices, i)
-            array.remove(liqTypes, i)
+            array.remove(liqLines,i)
+            array.remove(liqPrice,i)
+            array.remove(liqSide,i)
+            array.remove(liqTouch,i)
 
-            if array.size(liqLabels) > i
-                array.remove(liqLabels, i)
+
+// ───── Highlight Strong Liquidity ─────
+
+if array.size(liqLines) > 0
+
+    for i = 0 to array.size(liqLines)-1
+
+        touches = array.get(liqTouch,i)
+        ln = array.get(liqLines,i)
+
+        if touches >= minTouches
+            line.set_width(ln,2)
